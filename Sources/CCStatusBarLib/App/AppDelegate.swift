@@ -698,6 +698,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    private func shellQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     private func alertCommandSummaryTitle() -> String {
         guard let command = AppSettings.alertCommand?.trimmingCharacters(in: .whitespacesAndNewlines),
               !command.isEmpty else {
@@ -777,6 +781,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.informativeText = """
 Command runs with /bin/zsh -lc.
 
+Suggested VOICEVOX helper:
+\(shellQuoted(AppSettings.voicevoxHelperPath))
+
+Project speech templates live at:
+<project-root>/.cc-status-bar.voice.json
+
 Available variables:
 $CCSB_SOURCE
 $CCSB_SESSION_ID
@@ -798,7 +808,7 @@ $CCSB_TMUX_PANE_TARGET
 
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 460, height: 24))
         textField.stringValue = AppSettings.alertCommand ?? ""
-        textField.placeholderString = "terminal-notifier -message \"$CCSB_PROJECT $CCSB_TMUX_PANE_TARGET\""
+        textField.placeholderString = shellQuoted(AppSettings.voicevoxHelperPath)
         alert.accessoryView = textField
 
         let response = alert.runModal()

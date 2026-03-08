@@ -209,9 +209,6 @@ final class SessionObserver: ObservableObject {
             if session.status == .waitingInput && oldStatus != .waitingInput {
                 NotificationManager.shared.notifyWaitingInput(session: session)
                 SoundPlayer.runAlertCommand(for: session)
-                if let tty = session.tty {
-                    SoundPlayer.sendBell(tty: tty)
-                }
                 newlyWaiting.append(session)
             }
         }

@@ -51,6 +51,15 @@ enum AppSettings {
 
     /// Default alert sound path assigned on startup for first-time users.
     static let defaultAlertSoundPath = "/System/Library/Sounds/Ping.aiff"
+    static let defaultVoicevoxEngineBaseURL = "http://127.0.0.1:50021"
+
+    static var voicevoxSupportDirectory: String {
+        (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/CCStatusBar")
+    }
+
+    static var voicevoxHelperPath: String {
+        (voicevoxSupportDirectory as NSString).appendingPathComponent("bin/voicevox-alert.sh")
+    }
 
     static var launchAtLogin: Bool {
         get { defaults.bool(forKey: Keys.launchAtLogin) }

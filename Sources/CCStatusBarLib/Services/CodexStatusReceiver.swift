@@ -99,11 +99,9 @@ final class CodexStatusReceiver: ObservableObject {
 
         DebugLog.log("[CodexStatusReceiver] Codex waiting_input: \(cwd) reason=\(waitingReason.rawValue)")
 
-        // Play sound and send BEL for Codex waiting transition
+        // Run alert command for Codex waiting transition.
+        // The helper itself owns any local fallback sound, so we do not send BEL here.
         SoundPlayer.runAlertCommand(for: codexSession ?? CodexSession(pid: 0, cwd: cwd), waitingReason: waitingReason)
-        if let codexSession = codexSession, let tty = codexSession.tty {
-            SoundPlayer.sendBell(tty: tty)
-        }
 
         // Trigger autofocus for this Codex session
         if let codexSession = codexSession {
