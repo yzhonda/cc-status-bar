@@ -36,6 +36,10 @@ final class CodexStatusReceiver: ObservableObject {
     private var acknowledgedCwds: Set<String> = []
     /// cwd -> hash of pane content at last agent-turn-complete (for detecting running recovery)
     private var lastPaneCapture: [String: Int] = [:]
+    /// cwd -> last alert command fire time (throttle rapid-fire from Codex)
+    private var lastAlertTime: [String: Date] = [:]
+    /// Minimum interval between alert fires for the same cwd
+    private let alertCooldown: TimeInterval = 10.0
 
     private init() {}
 
@@ -99,9 +103,13 @@ final class CodexStatusReceiver: ObservableObject {
 
         DebugLog.log("[CodexStatusReceiver] Codex waiting_input: \(cwd) reason=\(waitingReason.rawValue)")
 
-        // Run alert command for Codex waiting transition.
-        // The helper itself owns any local fallback sound, so we do not send BEL here.
-        SoundPlayer.runAlertCommand(for: codexSession ?? CodexSession(pid: 0, cwd: cwd), waitingReason: waitingReason)
+        // Run alert command for Codex waiting transition (throttled per cwd).
+        if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
+            DebugLog.log("[CodexStatusReceiver] Alert throttled for \(cwd) (\(String(format: "%.1f", now.timeIntervalSince(lastFire)))s < \(Int(alertCooldown))s)")
+        } else {
+            lastAlertTime[cwd] = now
+            SoundPlayer.runAlertCommand(for: codexSession ?? CodexSession(pid: 0, cwd: cwd), waitingReason: waitingReason)
+        }
 
         // Trigger autofocus for this Codex session
         if let codexSession = codexSession {
@@ -170,6 +178,7 @@ final class CodexStatusReceiver: ObservableObject {
         statusByCwd.removeValue(forKey: cwd)
         acknowledgedCwds.remove(cwd)
         lastPaneCapture.removeValue(forKey: cwd)
+        lastAlertTime.removeValue(forKey: cwd)
         objectWillChange.send()
     }
 
@@ -178,6 +187,7 @@ final class CodexStatusReceiver: ObservableObject {
         statusByCwd.removeAll()
         acknowledgedCwds.removeAll()
         lastPaneCapture.removeAll()
+        lastAlertTime.removeAll()
         objectWillChange.send()
     }
 
@@ -194,9 +204,10 @@ final class CodexStatusReceiver: ObservableObject {
                     tracked.stoppedAt = nil
                     tracked.isSyntheticStopped = false
                     tracked.lastEventAt = now
-                    // Clear autofocus cooldown when Codex session returns to running
+                    // Clear autofocus and alert cooldowns when Codex session returns to running
                     let codexId = "codex:\(activeSessions.first { $0.cwd == cwd }?.pid ?? 0)"
                     AutofocusManager.shared.clearCooldown(sessionId: codexId)
+                    lastAlertTime.removeValue(forKey: cwd)
                 } else if tracked.status == .waitingInput {
                     // Detect running recovery by comparing pane content
                     if let session = activeSessions.first(where: { $0.cwd == cwd }),
