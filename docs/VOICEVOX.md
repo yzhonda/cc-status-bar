@@ -97,11 +97,10 @@ spoken in one flow. Do not leave ASCII letters in spoken fields.
 The runtime resolves the spoken project name in this order:
 
 1. `identity.alias_spoken`
-2. spoken form of `CCSB_DISPLAY_NAME`
-3. `identity.project_spoken`
-4. `identity.project_reading`
-5. spoken form of `identity.project_name`
-6. spoken form of `CCSB_PROJECT`
+2. `identity.project_spoken`
+3. `identity.project_reading`
+4. spoken form of `identity.project_name`
+5. spoken form of `CCSB_PROJECT`
 
 It also applies a final ASCII guard before synthesis, so the final spoken text
 must not contain raw English letters.

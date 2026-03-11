@@ -187,11 +187,10 @@ The helper expands these placeholders in `text`:
 `{project_reading}` is resolved in this order:
 
 1. `identity.alias_spoken`
-2. spoken form of `CCSB_DISPLAY_NAME`
-3. `identity.project_spoken`
-4. `identity.project_reading`
-5. spoken form of `identity.project_name`
-6. spoken form of `CCSB_PROJECT`
+2. `identity.project_spoken`
+3. `identity.project_reading`
+4. spoken form of `identity.project_name`
+5. spoken form of `CCSB_PROJECT`
 
 `{display_name}` and `{project_name}` are also expanded to spoken forms, not raw
 ASCII env values.

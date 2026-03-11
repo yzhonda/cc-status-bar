@@ -354,14 +354,6 @@ resolve_project_spoken() {
     return 0
   fi
 
-  if [ -n "$display_name" ]; then
-    spoken="$(spokenify_ascii_spans "$display_name")"
-    if [ -n "$spoken" ]; then
-      printf '%s\n' "$spoken"
-      return 0
-    fi
-  fi
-
   spoken="$(json_value_or_empty "$voice_file" '.identity.project_spoken')"
   if [ -n "$spoken" ]; then
     spoken="$(spokenify_ascii_spans "$spoken")"
