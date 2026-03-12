@@ -145,6 +145,8 @@ enum SoundPlayer {
             mappedReason = .permissionPrompt
         case .stop:
             mappedReason = .stop
+        case .idle:
+            mappedReason = .stop  // idle shouldn't reach here (guarded at caller), but map safely
         case .unknown:
             mappedReason = .unknown
         }

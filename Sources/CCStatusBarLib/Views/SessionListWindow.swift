@@ -719,7 +719,9 @@ struct PinnedCodexSessionRowView: View {
     private var statusLabel: String {
         switch displayStatus {
         case .waitingInput:
-            return waitingReason == .permissionPrompt ? "Permission" : "Waiting"
+            if waitingReason == .permissionPrompt { return "Permission" }
+            if waitingReason == .idle { return "Idle" }
+            return "Waiting"
         case .stopped:
             return "Stopped"
         case .running:
@@ -734,6 +736,9 @@ struct PinnedCodexSessionRowView: View {
         if !isAcked && status == .waitingInput {
             if waitingReason == .permissionPrompt {
                 return Color(red: 1.0, green: 0.3, blue: 0.3)
+            }
+            if waitingReason == .idle {
+                return Color(white: 0.55)
             }
             return Color(red: 1.0, green: 0.7, blue: 0.2)
         }

@@ -398,7 +398,11 @@ final class WebSocketManager {
         let waitingReason = CodexStatusReceiver.shared.getWaitingReason(for: session.cwd)
         let attentionLevel: Int
         if status == .waitingInput {
-            attentionLevel = (waitingReason == .permissionPrompt) ? 2 : 1  // red or yellow
+            if waitingReason == .idle {
+                attentionLevel = 0  // no alert for idle
+            } else {
+                attentionLevel = (waitingReason == .permissionPrompt) ? 2 : 1  // red or yellow
+            }
         } else if status == .stopped {
             attentionLevel = 0
         } else {

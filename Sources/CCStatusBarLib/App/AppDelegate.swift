@@ -999,7 +999,9 @@ $CCSB_TMUX_PANE_TARGET
             let isAcked = CodexStatusReceiver.shared.isAcknowledged(cwd: codexSession.cwd)
             if status == .waitingInput && !isAcked {
                 let waitingReason = CodexStatusReceiver.shared.getWaitingReason(for: codexSession.cwd)
-                if waitingReason == .permissionPrompt {
+                if waitingReason == .idle {
+                    green += 1  // idle is no-alert, count as green
+                } else if waitingReason == .permissionPrompt {
                     red += 1
                 } else {
                     yellow += 1
@@ -1036,14 +1038,18 @@ $CCSB_TMUX_PANE_TARGET
         if displayStatus == .stopped {
             symbolColor = NSColor.systemGray
         } else if displayStatus == .waitingInput {
-            symbolColor = (waitingReason == .permissionPrompt) ? theme.redColor : theme.yellowColor
+            if waitingReason == .idle {
+                symbolColor = NSColor.systemGray
+            } else {
+                symbolColor = (waitingReason == .permissionPrompt) ? theme.redColor : theme.yellowColor
+            }
         } else {
             symbolColor = theme.greenColor
         }
         let symbol: String
         switch displayStatus {
         case .running: symbol = "●"
-        case .waitingInput: symbol = "◐"
+        case .waitingInput: symbol = (waitingReason == .idle) ? "○" : "◐"
         case .stopped: symbol = "✓"
         }
 
@@ -1090,7 +1096,9 @@ $CCSB_TMUX_PANE_TARGET
         let envLabel = env.displayName
         let statusLabel: String
         if displayStatus == .waitingInput {
-            statusLabel = (waitingReason == .permissionPrompt) ? "Permission" : "Waiting"
+            if waitingReason == .permissionPrompt { statusLabel = "Permission" }
+            else if waitingReason == .idle { statusLabel = "Idle" }
+            else { statusLabel = "Waiting" }
         } else if displayStatus == .stopped {
             statusLabel = "Stopped"
         } else {

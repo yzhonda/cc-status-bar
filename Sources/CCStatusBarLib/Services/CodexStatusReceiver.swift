@@ -8,10 +8,11 @@ enum CodexStatus: String, Codable {
     case stopped
 }
 
-/// Reason of Codex waiting_input for color distinction (red/yellow)
+/// Reason of Codex waiting_input for color distinction (red/yellow/gray)
 enum CodexWaitingReason: String, Codable {
     case permissionPrompt = "permission_prompt"  // red
     case stop = "stop"                           // yellow
+    case idle = "idle"                           // gray (alive but idle prompt)
     case unknown = "unknown"                     // yellow fallback
 }
 
@@ -114,17 +115,20 @@ final class CodexStatusReceiver: ObservableObject {
 
         DebugLog.log("[CodexStatusReceiver] Codex waiting_input: \(cwd) reason=\(waitingReason.rawValue) source=\(waitingDetection.source)")
 
-        // Run alert command for Codex waiting transition (throttled per cwd).
-        if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
-            DebugLog.log("[CodexStatusReceiver] Alert throttled for \(cwd) (\(String(format: "%.1f", now.timeIntervalSince(lastFire)))s < \(Int(alertCooldown))s)")
-        } else {
-            lastAlertTime[cwd] = now
-            SoundPlayer.runAlertCommand(for: codexSession ?? CodexSession(pid: 0, cwd: cwd), waitingReason: waitingReason)
-        }
+        // idle は alert/autofocus を一切発火しない（cooldown も更新しない）
+        if waitingReason != .idle {
+            // Run alert command for Codex waiting transition (throttled per cwd).
+            if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
+                DebugLog.log("[CodexStatusReceiver] Alert throttled for \(cwd) (\(String(format: "%.1f", now.timeIntervalSince(lastFire)))s < \(Int(alertCooldown))s)")
+            } else {
+                lastAlertTime[cwd] = now
+                SoundPlayer.runAlertCommand(for: codexSession ?? CodexSession(pid: 0, cwd: cwd), waitingReason: waitingReason)
+            }
 
-        // Trigger autofocus for this Codex session
-        if let codexSession = codexSession {
-            AutofocusManager.shared.handleCodexWaitingTransition(codexSession, reason: waitingReason)
+            // Trigger autofocus for this Codex session
+            if let codexSession = codexSession {
+                AutofocusManager.shared.handleCodexWaitingTransition(codexSession, reason: waitingReason)
+            }
         }
 
         // Invalidate CodexObserver cache to trigger WebSocket update
@@ -309,6 +313,18 @@ final class CodexStatusReceiver: ObservableObject {
                             DebugLog.log("[CodexStatusReceiver] capturePane failed for waiting session: \(cwd)")
                         }
                     }
+                } else if tracked.status == .running {
+                    // Proactive idle prompt detection for running sessions
+                    if let session = activeSessions.first(where: { $0.cwd == cwd }),
+                       let currentCapture = capturePane(for: session),
+                       CodexIdlePromptDetector.isIdlePrompt(paneCapture: currentCapture) {
+                        tracked.status = .waitingInput
+                        tracked.waitingReason = .idle
+                        tracked.lastEventAt = now
+                        lastPaneCapture[cwd] = Self.hashPaneTail(currentCapture)
+                        DebugLog.log("[CodexStatusReceiver] Detected idle prompt, transitioning to idle: \(cwd)")
+                        CodexObserver.invalidateCache()
+                    }
                 }
                 statusByCwd[cwd] = tracked
             } else {
@@ -405,6 +421,10 @@ final class CodexStatusReceiver: ObservableObject {
             return (.stop, "pane_question_prompt")
         }
 
+        if CodexIdlePromptDetector.isIdlePrompt(paneCapture: paneCapture) {
+            return (.idle, "pane_idle_prompt")
+        }
+
         return (.stop, "default")
     }
 
@@ -412,6 +432,9 @@ final class CodexStatusReceiver: ObservableObject {
         guard let paneCapture, !paneCapture.isEmpty else { return false }
         if waitingReason == .permissionPrompt {
             return CodexRedSignalDetector.isHighConfidencePermissionPrompt(paneCapture: paneCapture)
+        }
+        if waitingReason == .idle {
+            return CodexIdlePromptDetector.isIdlePrompt(paneCapture: paneCapture)
         }
         return CodexQuestionSignalDetector.isHighConfidenceQuestionPrompt(paneCapture: paneCapture)
             || CodexRedSignalDetector.isHighConfidencePermissionPrompt(paneCapture: paneCapture)
@@ -482,6 +505,22 @@ private enum CodexQuestionSignalDetector {
         let hasNotesHint = normalized.contains("tab to add notes")
 
         return hasQuestionCounter && (hasSubmitHint || hasUnanswered || hasNotesHint)
+    }
+}
+
+private enum CodexIdlePromptDetector {
+    /// Detect Codex idle prompt (waiting for user input at the main prompt).
+    /// Conditions (AND):
+    /// - Pane tail contains `›` (Codex prompt arrow)
+    /// - Pane contains a line with `% left` (Codex capacity status bar)
+    static func isIdlePrompt(paneCapture: String?) -> Bool {
+        guard let paneCapture, !paneCapture.isEmpty else { return false }
+        let lines = paneCapture.components(separatedBy: .newlines)
+        // Check last non-empty lines for prompt arrow
+        let tailLines = lines.suffix(10)
+        let hasPromptArrow = tailLines.contains { $0.contains("\u{203A}") }  // ›
+        let hasPercentLeft = paneCapture.contains("% left")
+        return hasPromptArrow && hasPercentLeft
     }
 }
 
