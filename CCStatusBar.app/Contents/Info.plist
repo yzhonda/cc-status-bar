@@ -6,8 +6,6 @@
 	<string>CC Status Bar</string>
 	<key>CFBundleExecutable</key>
 	<string>CCStatusBar</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.ccstatusbar.app</string>
 	<key>CFBundleName</key>
@@ -15,9 +13,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.8.9</string>
+	<string>1.8.11</string>
 	<key>CFBundleVersion</key>
-	<string>1.8.9</string>
+	<string>1.8.11</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
 	<key>LSUIElement</key>
