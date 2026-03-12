@@ -185,6 +185,11 @@ enum TmuxHelper {
         let windowTarget = "\(info.session):\(info.window)"
         let paneTarget = "\(info.session):\(info.window).\(info.pane)"
 
+        // Signal auto-focus to tproj-pane-focus-hook
+        _ = runTmuxCommandArgs(["set-environment", "-t", info.session,
+                                "TPROJ_AUTOFOCUS_PENDING", paneTarget],
+                               socketPath: info.socketPath)
+
         // 1. ウィンドウを選択（タブ切り替え）
         _ = runTmuxCommandArgs(["select-window", "-t", windowTarget], socketPath: info.socketPath)
 
