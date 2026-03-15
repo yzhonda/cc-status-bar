@@ -696,7 +696,12 @@ enum TmuxHelper {
             let semaphore = DispatchSemaphore(value: 0)
             process.terminationHandler = { _ in semaphore.signal() }
             try process.run()
-            semaphore.wait()
+            let waitResult = semaphore.wait(timeout: .now() + 5)
+            if waitResult == .timedOut {
+                DebugLog.log("[TmuxHelper] Command timed out (5s): \(executable) \(args)")
+                process.terminate()
+                return ""
+            }
 
             let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
             let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
