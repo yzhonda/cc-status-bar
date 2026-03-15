@@ -210,10 +210,11 @@ enum CodexObserver {
         let normalized = commandLine.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty else { return false }
 
-        // Tokenize and check if "mcp-server" is a standalone argument (subcommand).
-        // This avoids false exclusion when "mcp-server" appears in paths or other arguments.
+        // Tokenize and check if non-interactive subcommands appear as standalone arguments.
+        // This avoids false exclusion when the subcommand name appears in paths or other arguments.
         let tokens = normalized.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
         if tokens.contains("mcp-server") { return false }
+        if tokens.contains("exec") { return false }
 
         return true
     }

@@ -117,16 +117,18 @@ final class CodexStatusReceiver: ObservableObject {
 
         // idle は alert/autofocus を一切発火しない（cooldown も更新しない）
         if waitingReason != .idle {
-            // Run alert command for Codex waiting transition (throttled per cwd).
-            if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
-                DebugLog.log("[CodexStatusReceiver] Alert throttled for \(cwd) (\(String(format: "%.1f", now.timeIntervalSince(lastFire)))s < \(Int(alertCooldown))s)")
-            } else {
-                lastAlertTime[cwd] = now
-                SoundPlayer.runAlertCommand(for: codexSession ?? CodexSession(pid: 0, cwd: cwd), waitingReason: waitingReason)
-            }
-
-            // Trigger autofocus for this Codex session
+            // Only fire alert/autofocus for sessions known to CodexObserver
+            // (excludes non-interactive invocations like `codex exec`)
             if let codexSession = codexSession {
+                // Run alert command for Codex waiting transition (throttled per cwd).
+                if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
+                    DebugLog.log("[CodexStatusReceiver] Alert throttled for \(cwd) (\(String(format: "%.1f", now.timeIntervalSince(lastFire)))s < \(Int(alertCooldown))s)")
+                } else {
+                    lastAlertTime[cwd] = now
+                    SoundPlayer.runAlertCommand(for: codexSession, waitingReason: waitingReason)
+                }
+
+                // Trigger autofocus for this Codex session
                 AutofocusManager.shared.handleCodexWaitingTransition(codexSession, reason: waitingReason)
             }
         }
@@ -314,16 +316,33 @@ final class CodexStatusReceiver: ObservableObject {
                         }
                     }
                 } else if tracked.status == .running {
-                    // Proactive idle prompt detection for running sessions
+                    // Proactive waiting detection for running sessions.
+                    // Catches permission prompts, question prompts, and idle prompts
+                    // even when the Codex notify event fails to fire.
                     if let session = activeSessions.first(where: { $0.cwd == cwd }),
                        let currentCapture = capturePane(for: session),
-                       CodexIdlePromptDetector.isIdlePrompt(paneCapture: currentCapture) {
+                       let detection = Self.detectWaitingInputFromPane(currentCapture) {
                         tracked.status = .waitingInput
-                        tracked.waitingReason = .idle
+                        tracked.waitingReason = detection.reason
                         tracked.lastEventAt = now
                         lastPaneCapture[cwd] = Self.hashPaneTail(currentCapture)
-                        DebugLog.log("[CodexStatusReceiver] Detected idle prompt, transitioning to idle: \(cwd)")
+                        acknowledgedCwds.remove(cwd)
+                        DebugLog.log("[CodexStatusReceiver] Poll detected waiting: \(cwd) reason=\(detection.reason.rawValue) source=poll_\(detection.source)")
                         CodexObserver.invalidateCache()
+
+                        // Alert + autofocus (idle はスキップ)
+                        if detection.reason != .idle {
+                            let codexSession = CodexObserver.getCodexSession(for: cwd)
+                            if let codexSession = codexSession {
+                                if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
+                                    DebugLog.log("[CodexStatusReceiver] Alert throttled for \(cwd)")
+                                } else {
+                                    lastAlertTime[cwd] = now
+                                    SoundPlayer.runAlertCommand(for: codexSession, waitingReason: detection.reason)
+                                }
+                                AutofocusManager.shared.handleCodexWaitingTransition(codexSession, reason: detection.reason)
+                            }
+                        }
                     }
                 }
                 statusByCwd[cwd] = tracked
@@ -403,6 +422,14 @@ final class CodexStatusReceiver: ObservableObject {
     /// Default is yellow (stop). Red is allowed only for high-confidence signals.
     static func inferWaitingReason(from json: [String: Any], paneCapture: String? = nil) -> CodexWaitingReason {
         detectWaitingInput(from: json, paneCapture: paneCapture).reason
+    }
+
+    /// Detect waiting state from pane capture only (no webhook JSON).
+    /// Returns nil if no waiting state detected (i.e. all detectors returned the default fallback).
+    static func detectWaitingInputFromPane(_ paneCapture: String) -> (reason: CodexWaitingReason, source: String)? {
+        let result = detectWaitingInput(from: [:], paneCapture: paneCapture)
+        if result.source == "default" { return nil }
+        return result
     }
 
     static func detectWaitingInput(from json: [String: Any], paneCapture: String? = nil) -> (reason: CodexWaitingReason, source: String) {
