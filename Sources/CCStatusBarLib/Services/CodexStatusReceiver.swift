@@ -283,13 +283,22 @@ final class CodexStatusReceiver: ObservableObject {
                     // Safety valve: recover to running if waiting_input stuck too long
                     let waitingDuration = now.timeIntervalSince(tracked.lastEventAt)
                     if waitingDuration > waitingRecoveryTimeout {
-                        tracked.status = .running
-                        tracked.waitingReason = nil
-                        tracked.lastEventAt = now
-                        lastPaneCapture.removeValue(forKey: cwd)
-                        acknowledgedCwds.remove(cwd)
-                        DebugLog.log("[CodexStatusReceiver] Waiting timeout (\(String(format: "%.0f", waitingDuration))s), recovering to running: \(cwd)")
-                        CodexObserver.invalidateCache()
+                        // Check pane before recovering — don't recover if still waiting
+                        if let session = activeSessions.first(where: { $0.cwd == cwd }),
+                           let currentCapture = capturePane(for: session),
+                           Self.detectWaitingInputFromPane(currentCapture) != nil {
+                            // Still showing waiting markers — extend, don't recover
+                            tracked.lastEventAt = now
+                            DebugLog.log("[CodexStatusReceiver] Waiting timeout but still waiting, extending: \(cwd)")
+                        } else {
+                            tracked.status = .running
+                            tracked.waitingReason = nil
+                            tracked.lastEventAt = now
+                            lastPaneCapture.removeValue(forKey: cwd)
+                            acknowledgedCwds.remove(cwd)
+                            DebugLog.log("[CodexStatusReceiver] Waiting timeout (\(String(format: "%.0f", waitingDuration))s), recovering to running: \(cwd)")
+                            CodexObserver.invalidateCache()
+                        }
                     } else if let session = activeSessions.first(where: { $0.cwd == cwd }) {
                         // Recover only after the waiting markers disappear. Simple hash changes
                         // are not enough because moving selection inside a question prompt

@@ -15,6 +15,8 @@ final class SessionObserver: ObservableObject {
     private var previousSessionIds: Set<String> = []  // Track known sessions for Bind-on-start
     private var previousSessionStatuses: [String: SessionStatus] = [:]  // Track status for notifications
     private var isInitialLoad = true  // Skip notifications on first load to avoid spam at startup
+    private var lastAlertTimeByTTY: [String: Date] = [:]  // Alert cooldown per physical session
+    private let alertCooldown: TimeInterval = 30
 
     /// Debounce work item for file watch events
     private var loadDebounceWorkItem: DispatchWorkItem?
@@ -195,7 +197,7 @@ final class SessionObserver: ObservableObject {
         } catch {
             sessions = []
             previousSessionIds = []
-            previousSessionStatuses = [:]
+            // Keep previousSessionStatuses to avoid re-firing alerts on transient errors
         }
     }
 
@@ -203,10 +205,19 @@ final class SessionObserver: ObservableObject {
 
     private func sendNotificationsForWaitingSessions(_ loadedSessions: [Session]) {
         var newlyWaiting: [Session] = []
+        let now = Date()
         for session in loadedSessions {
             // Check if status changed to waitingInput
             let oldStatus = previousSessionStatuses[session.id]
             if session.status == .waitingInput && oldStatus != .waitingInput {
+                // Cooldown check: same physical session (TTY) within 30s → skip alert
+                let alertKey = session.tty ?? session.id
+                if let lastFire = lastAlertTimeByTTY[alertKey],
+                   now.timeIntervalSince(lastFire) < alertCooldown {
+                    DebugLog.log("[SessionObserver] Alert throttled for \(session.displayName) (\(alertKey))")
+                    continue
+                }
+                lastAlertTimeByTTY[alertKey] = now
                 NotificationManager.shared.notifyWaitingInput(session: session)
                 SoundPlayer.runAlertCommand(for: session)
                 newlyWaiting.append(session)
@@ -227,11 +238,13 @@ final class SessionObserver: ObservableObject {
             SessionStore.shared.clearAcknowledged(sessionId: session.sessionId, tty: session.tty)
         }
 
-        // Clear notification and autofocus cooldowns for sessions that returned to running
+        // Clear notification, autofocus, and alert cooldowns for sessions that returned to running
         let runningIds = Set(loadedSessions.filter { $0.status == .running }.map { $0.id })
-        for sessionId in runningIds {
-            NotificationManager.shared.clearCooldown(sessionId: sessionId)
-            AutofocusManager.shared.clearCooldown(sessionId: sessionId)
+        for session in loadedSessions where session.status == .running {
+            NotificationManager.shared.clearCooldown(sessionId: session.id)
+            AutofocusManager.shared.clearCooldown(sessionId: session.id)
+            let alertKey = session.tty ?? session.id
+            lastAlertTimeByTTY.removeValue(forKey: alertKey)
         }
     }
 
