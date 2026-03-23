@@ -258,14 +258,15 @@ struct SessionListWindowView: View {
         guard showCodex else { return [] }
         let active = Array(CodexObserver.getActiveSessions().values).sorted { $0.pid < $1.pid }
 
-        // Exclude Codex sessions sharing a TTY with any CC session (subprocess of CC)
+        // Reconcile with FULL active list for accurate termination tracking
+        let all = CodexStatusReceiver.shared.withSyntheticStoppedSessions(activeSessions: active)
+
+        // TTY filter is display-only — don't let it corrupt reconciliation
         let ccTTYs = Set(observer.sessions.compactMap { $0.tty })
-        let selectable = active.filter { codexSession in
+        return all.filter { codexSession in
             guard let tty = codexSession.tty else { return true }
             return !ccTTYs.contains(tty)
         }
-
-        return CodexStatusReceiver.shared.withSyntheticStoppedSessions(activeSessions: selectable)
     }
 
     private var totalSessionCount: Int {

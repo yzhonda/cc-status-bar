@@ -27,7 +27,7 @@ final class CodexStatusReceiver: ObservableObject {
     /// Grace period before considering a missing Codex session as stopped (seconds)
     private let pidDisappearGrace: TimeInterval = 3.0
     /// Keep synthetic stopped sessions for this long before pruning (seconds)
-    private let stoppedRetention: TimeInterval = 90.0
+    private let stoppedRetention: TimeInterval = 5.0
     /// Safety valve: recover waiting_input to running if stuck longer than this (seconds)
     private let waitingRecoveryTimeout: TimeInterval = 30.0
 
