@@ -721,8 +721,9 @@ struct PinnedCodexSessionRowView: View {
     }
 
     /// Display status considering acknowledge state
+    /// Note: idle sessions always show as idle regardless of ack state
     private var displayStatus: CodexStatus {
-        (isAcked && status == .waitingInput) ? .running : status
+        (isAcked && status == .waitingInput && waitingReason != .idle) ? .running : status
     }
 
     private var statusLabel: String {

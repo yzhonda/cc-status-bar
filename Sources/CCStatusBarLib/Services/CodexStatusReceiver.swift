@@ -286,10 +286,18 @@ final class CodexStatusReceiver: ObservableObject {
                         // Check pane before recovering — don't recover if still waiting
                         if let session = activeSessions.first(where: { $0.cwd == cwd }),
                            let currentCapture = capturePane(for: session),
-                           Self.detectWaitingInputFromPane(currentCapture) != nil {
-                            // Still showing waiting markers — extend, don't recover
-                            tracked.lastEventAt = now
-                            DebugLog.log("[CodexStatusReceiver] Waiting timeout but still waiting, extending: \(cwd)")
+                           let detection = Self.detectWaitingInputFromPane(currentCapture) {
+                            if detection.reason == .idle && tracked.waitingReason != .idle {
+                                // Transitioned to idle — task completed
+                                tracked.waitingReason = .idle
+                                tracked.lastEventAt = now
+                                lastPaneCapture[cwd] = Self.hashPaneTail(currentCapture)
+                                DebugLog.log("[CodexStatusReceiver] Waiting transitioned to idle: \(cwd)")
+                            } else {
+                                // Still showing same waiting markers — extend
+                                tracked.lastEventAt = now
+                                DebugLog.log("[CodexStatusReceiver] Waiting timeout but still waiting, extending: \(cwd)")
+                            }
                         } else {
                             tracked.status = .running
                             tracked.waitingReason = nil
@@ -307,6 +315,15 @@ final class CodexStatusReceiver: ObservableObject {
                             let currentHash = Self.hashPaneTail(currentCapture)
                             if Self.isLikelyWaitingScreen(currentCapture, waitingReason: tracked.waitingReason) {
                                 lastPaneCapture[cwd] = currentHash
+                            } else if let detection = Self.detectWaitingInputFromPane(currentCapture),
+                                      detection.reason == .idle,
+                                      tracked.waitingReason != .idle {
+                                // Transitioned from question/permission to idle (task completed)
+                                tracked.waitingReason = .idle
+                                tracked.lastEventAt = now
+                                lastPaneCapture[cwd] = currentHash
+                                DebugLog.log("[CodexStatusReceiver] Waiting transitioned to idle: \(cwd)")
+                                CodexObserver.invalidateCache()
                             } else if Self.shouldRecoverToRunning(
                                 previousPaneHash: lastPaneCapture[cwd],
                                 currentPaneCapture: currentCapture,
@@ -453,12 +470,14 @@ final class CodexStatusReceiver: ObservableObject {
             return (.permissionPrompt, "pane_permission_prompt")
         }
 
-        if CodexQuestionSignalDetector.isHighConfidenceQuestionPrompt(paneCapture: paneCapture) {
-            return (.stop, "pane_question_prompt")
-        }
-
+        // Idle must be checked BEFORE question — scrollback may contain stale
+        // question markers while the bottom already shows the idle prompt.
         if CodexIdlePromptDetector.isIdlePrompt(paneCapture: paneCapture) {
             return (.idle, "pane_idle_prompt")
+        }
+
+        if CodexQuestionSignalDetector.isHighConfidenceQuestionPrompt(paneCapture: paneCapture) {
+            return (.stop, "pane_question_prompt")
         }
 
         return (.stop, "default")
@@ -527,9 +546,12 @@ private enum CodexRedSignalDetector {
 private enum CodexQuestionSignalDetector {
     private static let questionCounterRegex = try! NSRegularExpression(pattern: #"question\s+\d+\s*/\s*\d+"#)
 
+    /// Only check the last 15 lines to avoid matching stale question markers in scrollback.
     static func isHighConfidenceQuestionPrompt(paneCapture: String?) -> Bool {
         guard let paneCapture, !paneCapture.isEmpty else { return false }
-        let normalized = paneCapture
+        let lines = paneCapture.components(separatedBy: .newlines)
+        let tail = lines.suffix(15).joined(separator: "\n")
+        let normalized = tail
             .lowercased()
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
