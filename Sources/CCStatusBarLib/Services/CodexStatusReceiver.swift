@@ -115,22 +115,18 @@ final class CodexStatusReceiver: ObservableObject {
 
         DebugLog.log("[CodexStatusReceiver] Codex waiting_input: \(cwd) reason=\(waitingReason.rawValue) source=\(waitingDetection.source)")
 
-        // idle は alert/autofocus を一切発火しない（cooldown も更新しない）
-        if waitingReason != .idle {
-            // Only fire alert/autofocus for sessions known to CodexObserver
-            // (excludes non-interactive invocations like `codex exec`)
-            if let codexSession = codexSession {
-                // Run alert command for Codex waiting transition (throttled per cwd).
-                if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
-                    DebugLog.log("[CodexStatusReceiver] Alert throttled for \(cwd) (\(String(format: "%.1f", now.timeIntervalSince(lastFire)))s < \(Int(alertCooldown))s)")
-                } else {
-                    lastAlertTime[cwd] = now
-                    SoundPlayer.runAlertCommand(for: codexSession, waitingReason: waitingReason)
-                }
-
-                // Trigger autofocus for this Codex session
-                AutofocusManager.shared.handleCodexWaitingTransition(codexSession, reason: waitingReason)
+        // Fire alert/autofocus for all waiting transitions including idle.
+        // idle = task completed, user should be notified.
+        // Cooldown prevents repeated firing for the same session.
+        if let codexSession = codexSession {
+            if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
+                DebugLog.log("[CodexStatusReceiver] Alert throttled for \(cwd) (\(String(format: "%.1f", now.timeIntervalSince(lastFire)))s < \(Int(alertCooldown))s)")
+            } else {
+                lastAlertTime[cwd] = now
+                SoundPlayer.runAlertCommand(for: codexSession, waitingReason: waitingReason)
             }
+
+            AutofocusManager.shared.handleCodexWaitingTransition(codexSession, reason: waitingReason)
         }
 
         // Invalidate CodexObserver cache to trigger WebSocket update
@@ -293,6 +289,17 @@ final class CodexStatusReceiver: ObservableObject {
                                 tracked.lastEventAt = now
                                 lastPaneCapture[cwd] = Self.hashPaneTail(currentCapture)
                                 DebugLog.log("[CodexStatusReceiver] Waiting transitioned to idle: \(cwd)")
+                                // Fire alert + autofocus for task completion
+                                if let session = activeSessions.first(where: { $0.cwd == cwd }) {
+                                    if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
+                                        DebugLog.log("[CodexStatusReceiver] Idle alert throttled for \(cwd)")
+                                    } else {
+                                        lastAlertTime[cwd] = now
+                                        SoundPlayer.runAlertCommand(for: session, waitingReason: CodexWaitingReason.idle)
+                                    }
+                                    AutofocusManager.shared.handleCodexWaitingTransition(session, reason: .idle)
+                                }
+                                CodexObserver.invalidateCache()
                             } else {
                                 // Still showing same waiting markers — extend
                                 tracked.lastEventAt = now
@@ -323,6 +330,16 @@ final class CodexStatusReceiver: ObservableObject {
                                 tracked.lastEventAt = now
                                 lastPaneCapture[cwd] = currentHash
                                 DebugLog.log("[CodexStatusReceiver] Waiting transitioned to idle: \(cwd)")
+                                // Fire alert + autofocus for task completion
+                                if let codexSession = CodexObserver.getCodexSession(for: cwd) {
+                                    if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
+                                        DebugLog.log("[CodexStatusReceiver] Idle alert throttled for \(cwd)")
+                                    } else {
+                                        lastAlertTime[cwd] = now
+                                        SoundPlayer.runAlertCommand(for: codexSession, waitingReason: CodexWaitingReason.idle)
+                                    }
+                                    AutofocusManager.shared.handleCodexWaitingTransition(codexSession, reason: .idle)
+                                }
                                 CodexObserver.invalidateCache()
                             } else if Self.shouldRecoverToRunning(
                                 previousPaneHash: lastPaneCapture[cwd],
@@ -356,18 +373,17 @@ final class CodexStatusReceiver: ObservableObject {
                         DebugLog.log("[CodexStatusReceiver] Poll detected waiting: \(cwd) reason=\(detection.reason.rawValue) source=poll_\(detection.source)")
                         CodexObserver.invalidateCache()
 
-                        // Alert + autofocus (idle はスキップ)
-                        if detection.reason != .idle {
-                            let codexSession = CodexObserver.getCodexSession(for: cwd)
-                            if let codexSession = codexSession {
-                                if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
-                                    DebugLog.log("[CodexStatusReceiver] Alert throttled for \(cwd)")
-                                } else {
-                                    lastAlertTime[cwd] = now
-                                    SoundPlayer.runAlertCommand(for: codexSession, waitingReason: detection.reason)
-                                }
-                                AutofocusManager.shared.handleCodexWaitingTransition(codexSession, reason: detection.reason)
+                        // Alert for all transitions including idle (task completed).
+                        // Autofocus only for non-idle (idle = done, no need to switch).
+                        let codexSession = CodexObserver.getCodexSession(for: cwd)
+                        if let codexSession = codexSession {
+                            if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
+                                DebugLog.log("[CodexStatusReceiver] Alert throttled for \(cwd)")
+                            } else {
+                                lastAlertTime[cwd] = now
+                                SoundPlayer.runAlertCommand(for: codexSession, waitingReason: detection.reason)
                             }
+                            AutofocusManager.shared.handleCodexWaitingTransition(codexSession, reason: detection.reason)
                         }
                     }
                 }
@@ -470,14 +486,15 @@ final class CodexStatusReceiver: ObservableObject {
             return (.permissionPrompt, "pane_permission_prompt")
         }
 
-        // Idle must be checked BEFORE question — scrollback may contain stale
-        // question markers while the bottom already shows the idle prompt.
-        if CodexIdlePromptDetector.isIdlePrompt(paneCapture: paneCapture) {
-            return (.idle, "pane_idle_prompt")
-        }
-
+        // Question before idle — idle pattern (› + % left) is always visible,
+        // so it would false-positive during active question prompts.
+        // Question detector is tail-limited (15 lines) to avoid stale scrollback matches.
         if CodexQuestionSignalDetector.isHighConfidenceQuestionPrompt(paneCapture: paneCapture) {
             return (.stop, "pane_question_prompt")
+        }
+
+        if CodexIdlePromptDetector.isIdlePrompt(paneCapture: paneCapture) {
+            return (.idle, "pane_idle_prompt")
         }
 
         return (.stop, "default")
@@ -568,16 +585,16 @@ private enum CodexQuestionSignalDetector {
 
 private enum CodexIdlePromptDetector {
     /// Detect Codex idle prompt (waiting for user input at the main prompt).
-    /// Conditions (AND):
-    /// - Pane tail contains `›` (Codex prompt arrow)
-    /// - Pane contains a line with `% left` (Codex capacity status bar)
+    /// The idle prompt has `›` and `% left` both in the last 3 lines.
+    /// During running/active states, `›` scrolls up and `% left` stays at the bottom
+    /// but they are far apart — checking last 3 lines only avoids false positives.
     static func isIdlePrompt(paneCapture: String?) -> Bool {
         guard let paneCapture, !paneCapture.isEmpty else { return false }
         let lines = paneCapture.components(separatedBy: .newlines)
-        // Check last non-empty lines for prompt arrow
-        let tailLines = lines.suffix(10)
-        let hasPromptArrow = tailLines.contains { $0.contains("\u{203A}") }  // ›
-        let hasPercentLeft = paneCapture.contains("% left")
+        let tailLines = lines.suffix(3)
+        let tail = tailLines.joined(separator: "\n")
+        let hasPromptArrow = tail.contains("\u{203A}")  // ›
+        let hasPercentLeft = tail.contains("% left")
         return hasPromptArrow && hasPercentLeft
     }
 }

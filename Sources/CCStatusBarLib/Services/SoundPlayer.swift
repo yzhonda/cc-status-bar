@@ -146,7 +146,7 @@ enum SoundPlayer {
         case .stop:
             mappedReason = .stop
         case .idle:
-            mappedReason = .stop  // idle shouldn't reach here (guarded at caller), but map safely
+            mappedReason = .idle
         case .unknown:
             mappedReason = .unknown
         }

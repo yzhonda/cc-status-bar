@@ -4,6 +4,7 @@ enum WaitingReason: String, Codable {
     case permissionPrompt = "permission_prompt"  // Red - permission/choice waiting
     case askUserQuestion = "askUserQuestion"     // Yellow - AskUserQuestion tool waiting
     case stop = "stop"                           // Yellow - command completion waiting
+    case idle = "idle"                           // Gray - task completed, idle prompt
     case unknown = "unknown"                     // Yellow - legacy/unknown reason
 }
 
