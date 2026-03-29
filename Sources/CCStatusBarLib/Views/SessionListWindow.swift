@@ -463,6 +463,7 @@ struct PinnedSessionRowView: View {
                     .font(.system(size: 11))
                     .foregroundColor(Color(white: 0.6))
                     .lineLimit(1)
+                    .truncationMode(.middle)
 
                 HStack(spacing: 4) {
                     Text(session.environmentLabel)
@@ -641,6 +642,7 @@ struct PinnedCodexSessionRowView: View {
                     .font(.system(size: 11))
                     .foregroundColor(Color(white: 0.6))
                     .lineLimit(1)
+                    .truncationMode(.middle)
 
                 HStack(spacing: 4) {
                     Text(env.displayName)

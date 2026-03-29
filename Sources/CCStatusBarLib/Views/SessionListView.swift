@@ -81,6 +81,7 @@ struct SessionRowView: View {
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
             }
 
             Spacer()

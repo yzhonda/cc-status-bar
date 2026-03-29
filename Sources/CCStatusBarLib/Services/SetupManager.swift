@@ -54,9 +54,11 @@ final class SetupManager {
         binDir.appendingPathComponent("codex-notify.py")
     }
 
-    /// Path to Codex hooks script
+    /// Path to Codex hooks script (must be in a path WITHOUT spaces — Codex CLI
+    /// splits the command string on whitespace, so "Application Support" breaks execution)
     static var codexHookScript: URL {
-        binDir.appendingPathComponent("codex-hook.sh")
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/bin/ccsb-codex-hook.sh")
     }
 
     /// Path to Codex hooks.json
@@ -619,7 +621,8 @@ final class SetupManager {
               -d "$EVENT" >/dev/null 2>&1 || true
             """
 
-        try fm.createDirectory(at: Self.binDir, withIntermediateDirectories: true)
+        let hookDir = Self.codexHookScript.deletingLastPathComponent()
+        try fm.createDirectory(at: hookDir, withIntermediateDirectories: true)
         try scriptContent.write(to: Self.codexHookScript, atomically: true, encoding: .utf8)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptPath)
 
