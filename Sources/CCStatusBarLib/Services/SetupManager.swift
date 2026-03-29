@@ -54,6 +54,14 @@ final class SetupManager {
         binDir.appendingPathComponent("codex-notify.py")
     }
 
+    /// Path to Codex hooks script
+    static var codexHookScript: URL {
+        binDir.appendingPathComponent("codex-hook.sh")
+    }
+
+    /// Path to Codex hooks.json
+    private static let codexHooksFile = codexDir.appendingPathComponent("hooks.json")
+
     private init() {}
 
     /// Check whether a command string is one of CCStatusBar's hook commands.
@@ -115,6 +123,9 @@ final class SetupManager {
 
         // Register Codex notify (if Codex is installed)
         registerCodexNotifyIfNeeded()
+
+        // Register Codex hooks (SessionStart + Stop)
+        registerCodexHooksIfNeeded()
     }
 
     // MARK: - Translocation Detection
@@ -555,6 +566,182 @@ final class SetupManager {
             try content.write(toFile: configPath, atomically: true, encoding: .utf8)
             DebugLog.log("[SetupManager] Created Codex config with notify setting")
         }
+    }
+
+    // MARK: - Codex Hooks Integration
+
+    /// Register Codex hooks (SessionStart + Stop) if Codex is installed
+    private func registerCodexHooksIfNeeded() {
+        guard isCodexInstalled() else {
+            DebugLog.log("[SetupManager] Codex not installed, skipping hooks setup")
+            return
+        }
+
+        do {
+            try registerCodexHooks()
+            DebugLog.log("[SetupManager] Codex hooks registered")
+        } catch {
+            DebugLog.log("[SetupManager] Failed to register Codex hooks: \(error)")
+        }
+    }
+
+    /// Register Codex hooks: create hook script, hooks.json, and enable feature flag
+    private func registerCodexHooks() throws {
+        let fm = FileManager.default
+
+        // 1. Create hook script
+        let scriptPath = Self.codexHookScript.path
+        let scriptContent = """
+            #!/bin/bash
+            # CC Status Bar - Codex hook bridge
+            # Reads Codex hook event from stdin and POSTs to CC Status Bar
+            INPUT=$(cat)
+            EVENT=$(echo "$INPUT" | /usr/bin/python3 -c "
+            import sys, json
+            d = json.load(sys.stdin)
+            event_name = d.get('hook_event_name', '')
+            cwd = d.get('cwd', '')
+            session_id = d.get('session_id', '')
+            model = d.get('model', '')
+            raw = d.get('raw_event', {})
+            last_msg = raw.get('last_assistant_message', '')
+            if event_name == 'SessionStart':
+                out = {'type': 'codex-session-start', 'cwd': cwd, 'session_id': session_id, 'model': model}
+            elif event_name == 'Stop':
+                out = {'type': 'codex-stop', 'cwd': cwd, 'session_id': session_id, 'last_assistant_message': last_msg}
+            else:
+                sys.exit(0)
+            print(json.dumps(out))
+            ")
+            [ -z "$EVENT" ] && exit 0
+            /usr/bin/curl -s -X POST http://localhost:8080/api/codex/status \
+              -H "Content-Type: application/json" \
+              -d "$EVENT" >/dev/null 2>&1 || true
+            """
+
+        try fm.createDirectory(at: Self.binDir, withIntermediateDirectories: true)
+        try scriptContent.write(to: Self.codexHookScript, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptPath)
+
+        // 2. Create or update ~/.codex/hooks.json
+        try ensureCodexHooksJson()
+
+        // 3. Enable codex_hooks feature flag in config.toml
+        try ensureCodexHooksFeatureFlag()
+    }
+
+    /// Ensure ~/.codex/hooks.json has CCStatusBar hooks
+    private func ensureCodexHooksJson() throws {
+        let fm = FileManager.default
+        let hooksPath = Self.codexHooksFile.path
+        let hookCommand = Self.codexHookScript.path
+
+        try fm.createDirectory(at: Self.codexDir, withIntermediateDirectories: true)
+
+        // Build our hooks entries
+        let ourHookEntry: [String: Any] = [
+            "hooks": [["type": "command", "command": hookCommand]]
+        ]
+        var hooksDict: [String: Any] = [
+            "description": "CC Status Bar hooks",
+            "hooks": [
+                "SessionStart": [ourHookEntry],
+                "Stop": [ourHookEntry]
+            ]
+        ]
+
+        if fm.fileExists(atPath: hooksPath) {
+            // Read existing hooks.json and merge
+            if let data = fm.contents(atPath: hooksPath),
+               let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let existingHooks = existing["hooks"] as? [String: Any] {
+                // Check if already registered
+                if let stops = existingHooks["Stop"] as? [[String: Any]],
+                   stops.contains(where: { entry in
+                       guard let hooks = entry["hooks"] as? [[String: Any]] else { return false }
+                       return hooks.contains { ($0["command"] as? String)?.contains("codex-hook.sh") == true }
+                   }) {
+                    DebugLog.log("[SetupManager] Codex hooks already registered in hooks.json")
+                    return
+                }
+
+                // Merge: add our hooks to existing
+                var mergedHooks = existingHooks
+                for event in ["SessionStart", "Stop"] {
+                    var entries = mergedHooks[event] as? [[String: Any]] ?? []
+                    entries.append(ourHookEntry)
+                    mergedHooks[event] = entries
+                }
+                hooksDict["hooks"] = mergedHooks
+                if let desc = existing["description"] as? String {
+                    hooksDict["description"] = desc
+                }
+            }
+        }
+
+        let data = try JSONSerialization.data(withJSONObject: hooksDict, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: Self.codexHooksFile)
+        DebugLog.log("[SetupManager] Created/updated Codex hooks.json")
+    }
+
+    /// Ensure config.toml has features.codex_hooks = true
+    private func ensureCodexHooksFeatureFlag() throws {
+        let fm = FileManager.default
+        let configPath = Self.codexConfigFile.path
+        let featureLine = "codex_hooks = true"
+
+        try fm.createDirectory(at: Self.codexDir, withIntermediateDirectories: true)
+
+        if fm.fileExists(atPath: configPath) {
+            var content = try String(contentsOfFile: configPath, encoding: .utf8)
+
+            if content.contains(featureLine) {
+                DebugLog.log("[SetupManager] Codex hooks feature flag already set")
+                return
+            }
+
+            if content.contains("[features]") {
+                // Add under existing [features] section
+                content = content.replacingOccurrences(
+                    of: "[features]",
+                    with: "[features]\n\(featureLine)"
+                )
+            } else {
+                // Add new [features] section
+                content += "\n\n[features]\n\(featureLine)\n"
+            }
+            try content.write(toFile: configPath, atomically: true, encoding: .utf8)
+            DebugLog.log("[SetupManager] Added Codex hooks feature flag")
+        } else {
+            let content = "[features]\n\(featureLine)\n"
+            try content.write(toFile: configPath, atomically: true, encoding: .utf8)
+            DebugLog.log("[SetupManager] Created Codex config with hooks feature flag")
+        }
+    }
+
+    /// Check if Codex hooks mode should be active
+    static func isCodexHooksModeAvailable() -> Bool {
+        let fm = FileManager.default
+        let configPath = codexConfigFile.path
+        let hooksPath = codexHooksFile.path
+
+        // Check feature flag
+        guard fm.fileExists(atPath: configPath),
+              let content = try? String(contentsOfFile: configPath, encoding: .utf8),
+              content.contains("codex_hooks = true") else {
+            return false
+        }
+
+        // Check hooks.json exists with our hooks
+        guard fm.fileExists(atPath: hooksPath),
+              let data = fm.contents(atPath: hooksPath),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let hooks = json["hooks"] as? [String: Any],
+              hooks["Stop"] != nil else {
+            return false
+        }
+
+        return true
     }
 
     // MARK: - Cleanup (for uninstall)

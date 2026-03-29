@@ -73,6 +73,8 @@ final class CodexStatusReceiver: ObservableObject {
             handleTokenUsage(cwd: cwd, json: json)
         case "codex-session-start":
             handleSessionStart(cwd: cwd, json: json)
+        case "codex-stop":
+            handleCodexStop(cwd: cwd, json: json)
         default:
             DebugLog.log("[CodexStatusReceiver] Unknown event type: \(eventType)")
         }
@@ -185,9 +187,60 @@ final class CodexStatusReceiver: ObservableObject {
             isSyntheticStopped: false
         )
 
+        // In hooks mode, register session in CodexHooksSessionStore
+        if CodexObserver.useHooksMode {
+            let sessionId = json["session_id"] as? String ?? threadId
+            let model = json["model"] as? String
+            CodexHooksSessionStore.shared.registerSession(cwd: cwd, sessionId: sessionId, model: model)
+        }
+
         objectWillChange.send()
         CodexObserver.invalidateCache()
         DebugLog.log("[CodexStatusReceiver] Session started: \(cwd) thread=\(threadId ?? "nil")")
+    }
+
+    private func handleCodexStop(cwd: String?, json: [String: Any]) {
+        guard let cwd = cwd else {
+            DebugLog.log("[CodexStatusReceiver] codex-stop without cwd")
+            return
+        }
+
+        let now = Date()
+
+        // Stop = turn complete = idle transition (task completed)
+        if var tracked = statusByCwd[cwd] {
+            tracked.status = .waitingInput
+            tracked.waitingReason = .idle
+            tracked.lastEventAt = now
+            statusByCwd[cwd] = tracked
+        } else {
+            statusByCwd[cwd] = CodexSessionStatus(
+                status: .waitingInput,
+                waitingReason: .idle,
+                lastEventAt: now,
+                threadId: json["session_id"] as? String,
+                lastSeenAt: now,
+                stoppedAt: nil,
+                isSyntheticStopped: false
+            )
+        }
+
+        DebugLog.log("[CodexStatusReceiver] Codex stop (idle): \(cwd)")
+
+        // Fire alert + autofocus for task completion
+        let codexSession = CodexObserver.getCodexSession(for: cwd)
+        if let codexSession = codexSession {
+            if let lastFire = lastAlertTime[cwd], now.timeIntervalSince(lastFire) < alertCooldown {
+                DebugLog.log("[CodexStatusReceiver] Idle alert throttled for \(cwd)")
+            } else {
+                lastAlertTime[cwd] = now
+                SoundPlayer.runAlertCommand(for: codexSession, waitingReason: CodexWaitingReason.idle)
+            }
+            AutofocusManager.shared.handleCodexWaitingTransition(codexSession, reason: .idle)
+        }
+
+        objectWillChange.send()
+        CodexObserver.invalidateCache()
     }
 
     // MARK: - Token Usage Query

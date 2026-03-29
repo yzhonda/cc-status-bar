@@ -112,10 +112,18 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             object: nil
         )
 
-        // Pre-warm Codex session cache in background
-        DispatchQueue.global(qos: .utility).async {
-            _ = CodexObserver.getActiveSessions()
-            DebugLog.log("[AppDelegate] Cache pre-warm complete")
+        // Determine Codex hooks mode at startup
+        if SetupManager.isCodexHooksModeAvailable() {
+            CodexObserver.useHooksMode = true
+            CodexHooksSessionStore.shared.hydrateFromRunningProcesses()
+            DebugLog.log("[AppDelegate] Codex hooks mode: enabled (hydrated \(CodexHooksSessionStore.shared.activeSessions.count) sessions)")
+        } else {
+            CodexObserver.useHooksMode = false
+            // Pre-warm Codex session cache in background (legacy mode)
+            DispatchQueue.global(qos: .utility).async {
+                _ = CodexObserver.getActiveSessionsLegacy()
+                DebugLog.log("[AppDelegate] Codex legacy mode: cache pre-warm complete")
+            }
         }
 
         // Poll Codex status reconciliation so synthetic stopped can be reflected without hooks.

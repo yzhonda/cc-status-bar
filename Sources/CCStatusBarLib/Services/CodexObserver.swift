@@ -4,6 +4,11 @@ import Combine
 /// Observes active Codex CLI sessions by monitoring running processes
 /// Matches Codex sessions with Claude Code sessions by cwd
 enum CodexObserver {
+    // MARK: - Mode
+
+    /// When true, hooks-based session management is active (pgrep polling disabled)
+    static var useHooksMode: Bool = false
+
     // MARK: - Cache
 
     /// Cache for active Codex sessions (3-state: fresh / stale / empty)
@@ -22,10 +27,20 @@ enum CodexObserver {
 
     // MARK: - Public API
 
-    /// Get all active Codex sessions indexed by internal id
-    /// Uses stale-while-revalidate: returns cached data immediately and refreshes in background
-    /// - Returns: Dictionary of session key -> CodexSession
+    /// Get all active Codex sessions indexed by internal id.
+    /// In hooks mode, returns sessions from CodexHooksSessionStore (must be called from MainActor).
+    /// In legacy mode, uses stale-while-revalidate cache with pgrep-based discovery.
+    @MainActor
     static func getActiveSessions() -> [String: CodexSession] {
+        if useHooksMode {
+            CodexHooksSessionStore.shared.pruneDeadProcesses()
+            return CodexHooksSessionStore.shared.activeSessions
+        }
+        return getActiveSessionsLegacy()
+    }
+
+    /// Legacy implementation: pgrep-based discovery with stale-while-revalidate cache.
+    static func getActiveSessionsLegacy() -> [String: CodexSession] {
         let now = Date()
 
         if let cached = sessionsCache {
@@ -52,15 +67,13 @@ enum CodexObserver {
     }
 
     /// Check if Codex is running for a specific cwd
-    /// - Parameter cwd: The working directory to check
-    /// - Returns: true if Codex is running in that directory
+    @MainActor
     static func isCodexRunning(for cwd: String) -> Bool {
         return getActiveSessions().values.contains { $0.cwd == cwd }
     }
 
     /// Get Codex session for a specific cwd
-    /// - Parameter cwd: The working directory
-    /// - Returns: CodexSession if running, nil otherwise
+    @MainActor
     static func getCodexSession(for cwd: String) -> CodexSession? {
         return getActiveSessions().values
             .filter { $0.cwd == cwd }
@@ -69,8 +82,7 @@ enum CodexObserver {
     }
 
     /// Get CodexInfo for WebSocket output
-    /// - Parameter cwd: The working directory
-    /// - Returns: CodexInfo if Codex is running, nil otherwise
+    @MainActor
     static func getCodexInfo(for cwd: String) -> CodexInfo? {
         guard let session = getCodexSession(for: cwd) else {
             return nil
@@ -104,6 +116,34 @@ enum CodexObserver {
                 DebugLog.log("[CodexObserver] Background refresh complete (\(sessions.count) sessions)")
             }
         }
+    }
+
+    // MARK: - Public Wrappers (for CodexHooksSessionStore)
+
+    /// Public wrapper for fetchCodexSessions (used by hooks mode bootstrap)
+    static func fetchCodexSessionsPublic() -> [String: CodexSession] {
+        fetchCodexSessions()
+    }
+
+    /// Find PID for a given cwd by scanning running Codex processes
+    static func findPidForCwd(_ cwd: String) -> pid_t? {
+        let pids = getCodexPIDs()
+        for pid in pids {
+            if let pidCwd = getCwd(for: pid), pidCwd == cwd {
+                return pid
+            }
+        }
+        return nil
+    }
+
+    /// Public wrapper for getTTY
+    static func getTTYPublic(for pid: pid_t) -> String? {
+        getTTY(for: pid)
+    }
+
+    /// Public wrapper for findCodexSessionExtended
+    static func findExtendedInfoPublic(for cwd: String) -> CodexSessionFileInfo? {
+        findCodexSessionExtended(for: cwd)
     }
 
     // MARK: - Private
