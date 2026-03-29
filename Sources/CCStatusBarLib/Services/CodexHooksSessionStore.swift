@@ -99,6 +99,20 @@ final class CodexHooksSessionStore {
         if !removed.isEmpty {
             DebugLog.log("[CodexHooksSessionStore] Pruned dead processes: \(removed.joined(separator: ", "))")
         }
+
+        // Re-hydrate if store is empty but Codex processes are still running.
+        // This covers the case where all tracked sessions died (prune) but new
+        // Codex processes started without sending SessionStart hooks (e.g. hooks
+        // config not yet picked up by those processes).
+        if activeSessions.isEmpty {
+            let fresh = CodexObserver.fetchCodexSessionsPublic()
+            if !fresh.isEmpty {
+                for (key, session) in fresh {
+                    activeSessions[key] = session
+                }
+                DebugLog.log("[CodexHooksSessionStore] Re-hydrated \(fresh.count) sessions (store was empty)")
+            }
+        }
     }
 
     /// Clear all sessions
