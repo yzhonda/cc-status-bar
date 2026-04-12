@@ -22,6 +22,13 @@ enum TmuxAttachCommand {
 }
 
 enum TmuxHelper {
+    private static let focusTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
     struct PaneInfo {
         let session: String
         let window: String
@@ -188,6 +195,10 @@ enum TmuxHelper {
         // Signal auto-focus to tproj-pane-focus-hook
         _ = runTmuxCommandArgs(["set-environment", "-t", info.session,
                                 "TPROJ_AUTOFOCUS_PENDING", paneTarget],
+                               socketPath: info.socketPath)
+        // Fallback: if after-select-pane does not fire, leave the auto-focus timestamp behind anyway.
+        _ = runTmuxCommandArgs(["set-option", "-pt", paneTarget,
+                                "@last_focus_at", focusTimeFormatter.string(from: Date())],
                                socketPath: info.socketPath)
 
         // 1. ウィンドウを選択（タブ切り替え）
