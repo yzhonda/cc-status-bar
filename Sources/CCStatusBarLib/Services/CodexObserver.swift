@@ -258,6 +258,7 @@ enum CodexObserver {
         let tokens = normalized.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
         if tokens.contains("mcp-server") { return false }
         if tokens.contains("exec") { return false }
+        if tokens.contains("--dangerously-bypass-approvals-and-sandbox") { return false }
 
         return true
     }
