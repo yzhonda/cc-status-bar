@@ -72,13 +72,16 @@ enum CodexObserver {
         return getActiveSessions().values.contains { $0.cwd == cwd }
     }
 
-    /// Get Codex session for a specific cwd
+    /// Get Codex session for a specific cwd.
+    /// Prefers sessions with a resolved tmux pane (can be captured), falling back to lowest PID.
     @MainActor
     static func getCodexSession(for cwd: String) -> CodexSession? {
-        return getActiveSessions().values
-            .filter { $0.cwd == cwd }
-            .sorted { $0.pid < $1.pid }
-            .first
+        let candidates = getActiveSessions().values.filter { $0.cwd == cwd }
+        // Prefer session with tmux pane info (capturePane will work)
+        if let withPane = candidates.filter({ $0.tmuxPane != nil }).sorted(by: { $0.pid < $1.pid }).first {
+            return withPane
+        }
+        return candidates.sorted { $0.pid < $1.pid }.first
     }
 
     /// Get CodexInfo for WebSocket output
