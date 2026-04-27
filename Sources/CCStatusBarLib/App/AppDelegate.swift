@@ -6,6 +6,8 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var sessionObserver: SessionObserver!
     private var cancellables = Set<AnyCancellable>()
     private var isMenuOpen = false
+    /// Set when a rebuild was requested while the menu was open; flushed on close.
+    private var pendingMenuRebuild = false
 
     /// Debounce work item for menu rebuilds
     private var menuRebuildWorkItem: DispatchWorkItem?
@@ -289,6 +291,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @MainActor
     private func rebuildMenu() {
+        // Reassigning statusItem.menu while AppKit is mid-tracking can crash inside
+        // NSDisplayCycleFlush. Defer until the menu closes.
+        if isMenuOpen {
+            pendingMenuRebuild = true
+            return
+        }
         let menu = NSMenu()
         buildMenuItems(into: menu)
         menu.delegate = self
@@ -368,6 +376,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     public func menuDidClose(_ menu: NSMenu) {
         isMenuOpen = false
+        if pendingMenuRebuild {
+            pendingMenuRebuild = false
+            // Run on next runloop turn so AppKit fully releases tracking state first.
+            DispatchQueue.main.async { [weak self] in
+                self?.rebuildMenu()
+            }
+        }
     }
 
     @MainActor @objc private func showDiagnostics() {

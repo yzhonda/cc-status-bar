@@ -222,6 +222,9 @@ final class CodexStatusReceiverTests: XCTestCase {
         let active = [CodexSession(pid: 1003, cwd: cwd)]
 
         receiver.reconcileActiveSessions(active, now: base)
+        // withSyntheticStoppedSessions is pure (no state mutation); callers must
+        // reconcile separately on a timer/notification path.
+        receiver.reconcileActiveSessions([], now: base.addingTimeInterval(4))
         let sessionsAfterStop = receiver.withSyntheticStoppedSessions(
             activeSessions: [],
             now: base.addingTimeInterval(4)

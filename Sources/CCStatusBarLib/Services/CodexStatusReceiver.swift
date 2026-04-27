@@ -473,9 +473,12 @@ final class CodexStatusReceiver: ObservableObject {
     }
 
     /// Return active sessions augmented with synthetic placeholders for tracked waiting/stopped states.
+    ///
+    /// Pure read: does NOT mutate state or fire `objectWillChange`. Safe to call from
+    /// SwiftUI `body` evaluation. Callers responsible for state transitions (idle/stopped
+    /// promotion, prune) must call `reconcileActiveSessions(_:)` separately on a timer
+    /// or notification path — never from inside view body.
     func withSyntheticStoppedSessions(activeSessions: [CodexSession], now: Date = Date()) -> [CodexSession] {
-        reconcileActiveSessions(activeSessions, now: now)
-
         var result = activeSessions
         let activeCwds = Set(activeSessions.map(\.cwd))
         for (cwd, tracked) in statusByCwd where tracked.status != .running && !activeCwds.contains(cwd) {

@@ -141,11 +141,18 @@ final class SessionListWindowController {
 
         let height = requiredHeight
         var frame = panel.frame
+        // Skip frame mutation entirely if size unchanged — avoids spurious layout
+        // invalidations when the controller is called from a timer.
+        if abs(frame.height - height) < 0.5 {
+            return
+        }
         let heightDiff = height - frame.height
         frame.size.height = height
         frame.origin.y -= heightDiff  // Keep top position stable
         frame = clampedToVisibleScreen(frame, panel: panel)
-        panel.setFrame(frame, display: true, animate: true)
+        // animate:false to keep AppKit's display cycle out of trouble during
+        // status bar menu tracking (animated frames can recurse into layout).
+        panel.setFrame(frame, display: true, animate: false)
         panel.invalidateShadow()
     }
 
@@ -326,6 +333,11 @@ struct SessionListWindowView: View {
             SessionListWindowController.shared.updateWindowSize(sessionCount: newCount)
         }
         .onReceive(codexRefreshTimer) { _ in
+            // Drive state transitions OUTSIDE body evaluation, then trigger re-render.
+            // Calling reconcile from inside the body invalidates layout while AppKit
+            // is mid-flush (status bar menu tracking) and crashes via NSDisplayCycleFlush.
+            let active = Array(CodexObserver.getActiveSessions().values)
+            CodexStatusReceiver.shared.reconcileActiveSessions(active)
             codexRefreshTick = Date()
         }
     }
